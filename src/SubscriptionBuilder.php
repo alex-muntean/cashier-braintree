@@ -125,7 +125,7 @@ class SubscriptionBuilder
      * @return \Laravel\Cashier\Subscription
      * @throws \Exception
      */
-    public function create($token = null, array $customerOptions = [], array $subscriptionOptions = []): Subscription
+    public function create($token = null, array $customerOptions = [], array $subscriptionOptions = [], array $modelOptions = []): Subscription
     {
         $payload = $this->getSubscriptionPayload(
             $this->getBraintreeCustomer($token, $customerOptions), $subscriptionOptions
@@ -147,14 +147,14 @@ class SubscriptionBuilder
             $trialEndsAt = $this->trialDays ? Carbon::now()->addDays($this->trialDays) : null;
         }
 
-        return $this->owner->subscriptions()->create([
+        return $this->owner->subscriptions()->create(array_merge([
             'name' => $this->name,
             'braintree_id'   => $response->subscription->id,
             'braintree_plan' => $this->plan,
             'quantity' => 1,
             'trial_ends_at' => $trialEndsAt,
             'ends_at' => null,
-        ]);
+        ], $modelOptions));
     }
 
     /**

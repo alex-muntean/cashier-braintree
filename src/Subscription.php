@@ -176,7 +176,7 @@ class Subscription extends Model
      * @return $this|\Laravel\Cashier\Subscription
      * @throws \Exception
      */
-    public function swap($plan)
+    public function swap($plan, $attributes = [], $modelAttributes = [])
     {
         if ($this->onGracePeriod() && $this->braintree_plan === $plan) {
             return $this->resume();
@@ -190,12 +190,12 @@ class Subscription extends Model
         $plan = BraintreeService::findPlan($plan);
 
         if ($this->wouldChangeBillingFrequency($plan) && $this->prorate) {
-            return $this->swapAcrossFrequencies($plan);
+            return $this->swapAcrossFrequencies($plan, $attributes, $modelAttributes);
         }
 
         $subscription = $this->asBraintreeSubscription();
 
-        $response = BraintreeSubscription::update($subscription->id, [
+        $response = BraintreeSubscription::update($subscription->id, array_merge([
             'planId' => $plan->id,
             'price' => number_format($plan->price * (1 + ($this->owner->taxPercentage() / 100)), 2, '.', ''),
             'neverExpires' => true,
@@ -203,13 +203,13 @@ class Subscription extends Model
             'options' => [
                 'prorateCharges' => $this->prorate,
             ],
-        ]);
+        ], $attributes));
 
         if ($response->success) {
-            $this->fill([
+            $this->fill(array_merge([
                 'braintree_plan' => $plan->id,
                 'ends_at' => null,
-            ])->save();
+            ], $modelAttributes))->save();
         } else {
             throw new Exception('Braintree failed to swap plans: '.$response->message);
         }
@@ -236,12 +236,12 @@ class Subscription extends Model
      * @return \Laravel\Cashier\Subscription
      * @throws \Exception
      */
-    protected function swapAcrossFrequencies($plan): self
+    protected function swapAcrossFrequencies($plan, $attributes = [], $modelAttributes): self
     {
         $currentPlan = BraintreeService::findPlan($this->braintree_plan);
-
+        $quantity = isset($modelAttributes['quantity']) ? $modelAttributes['quantity'] : 1;
         $discount = $this->switchingToMonthlyPlan($currentPlan, $plan)
-                                ? $this->getDiscountForSwitchToMonthly($currentPlan, $plan)
+                                ? $this->getDiscountForSwitchToMonthly($currentPlan, $plan, $quantity)
                                 : $this->getDiscountForSwitchToYearly();
 
         $options = [];
@@ -260,7 +260,7 @@ class Subscription extends Model
 
         return $this->owner->newSubscription($this->name, $plan->id)
             ->skipTrial()
-            ->create(null, [], $options);
+            ->create(null, [], array_merge($options, $attributes), $modelAttributes);
     }
 
     /**
@@ -282,12 +282,12 @@ class Subscription extends Model
      * @param  \Braintree\Plan  $plan
      * @return object
      */
-    protected function getDiscountForSwitchToMonthly(Plan $currentPlan, Plan $plan)
+    protected function getDiscountForSwitchToMonthly(Plan $currentPlan, Plan $plan, $new_quantity = 1)
     {
         return (object) [
-            'amount' => $plan->price,
+            'amount' => $plan->price * $new_quantity * (1 + ($this->owner->taxPercentage() / 100)),
             'numberOfBillingCycles' => floor(
-                $this->moneyRemainingOnYearlyPlan($currentPlan) / $plan->price
+                $this->moneyRemainingOnYearlyPlan($currentPlan) / ($plan->price * $new_quantity * (1 + ($this->owner->taxPercentage() / 100)))
             ),
         ];
     }
@@ -300,7 +300,7 @@ class Subscription extends Model
      */
     protected function moneyRemainingOnYearlyPlan(Plan $plan)
     {
-        return ($plan->price / 365) * Carbon::today()->diffInDays(Carbon::instance(
+        return (($plan->price * $this->quantity * (1 + ($this->owner->taxPercentage() / 100))) / 365) * Carbon::today()->diffInDays(Carbon::instance(
             $this->asBraintreeSubscription()->billingPeriodEndDate
         ), false);
     }
